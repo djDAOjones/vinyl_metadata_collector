@@ -28,6 +28,7 @@ class Enricher:
         client: DiscogsClient,
         console: typer.rich_utils.Console,
         row_delay: float = 0.5,
+        debug_scoring: bool = False,
     ) -> None:
         self.client = client
         self.console = console
@@ -36,6 +37,7 @@ class Enricher:
         self._release_cache: Dict[int, Dict[str, Any]] = {}
         self._search_cache: Dict[Tuple[str, Tuple[Tuple[str, Any], ...]], Dict[str, Any]] = {}
         self._stop_requested = False
+        self._debug_scoring = debug_scoring
 
     def _get_release_cached(self, release_id: int) -> Dict[str, Any]:
         """Fetch a release once per run and reuse subsequent requests."""
@@ -108,7 +110,7 @@ class Enricher:
                     return RowEnrichment(
                         found=True,
                         discogs_id=release_id,
-                        confidence="Manual",
+                        confidence=plan.provided_confidence or "Manual",
                         fields=fields,
                     )
                 except DiscogsError as exc:
@@ -118,7 +120,8 @@ class Enricher:
                         f"[yellow]Discogs ID {release_id} not found; falling back to search.[/yellow]"
                     )
 
-        candidate = self._search_for_candidate(plan, label, title)
+        expected_year = _parse_year(row.get("Year of Release") or row.get("Year"))
+        candidate = self._search_for_candidate(plan, label, title, expected_year)
         if not candidate:
             self._log("    ↳ No matching Discogs release found.")
             return RowEnrichment(
@@ -145,6 +148,7 @@ class Enricher:
         plan: SearchPlan,
         label: str,
         title: str,
+        expected_year: Optional[int],
     ) -> Optional[Dict[str, Any]]:
         best: Optional[Dict[str, Any]] = None
         normalized_simple = [_simple_norm(v) for v in plan.normalized_catnos]
@@ -166,7 +170,7 @@ class Enricher:
                 if not release_id:
                     continue
                 score, confidence = self._score_result(
-                    result, normalized_simple, label, title
+                    result, normalized_simple, label, title, expected_year
                 )
                 if score <= 0:
                     continue
@@ -212,40 +216,87 @@ class Enricher:
         normalized_catnos: Sequence[str],
         label: str,
         title: str,
+        expected_year: Optional[int],
     ) -> tuple[int, str]:
         score = 0
         confidence = "Fallback"
         catno = _simple_norm(result.get("catno"))
+        overlap_hits = 0
+        exact_cat = False
 
+        # Catalogue matching
         if catno and normalized_catnos:
-            # Strong match if any token equals.
             if catno in normalized_catnos:
-                score += 100
+                score += 120
                 confidence = "Exact"
+                exact_cat = True
             else:
-                # Partial token overlaps.
+                # Partial token overlaps; boost multi-token hits.
                 overlap_hits = sum(
                     1 for variant in normalized_catnos if variant and (catno in variant or variant in catno)
                 )
-                if overlap_hits:
-                    score += 40 + overlap_hits * 5
+                if overlap_hits >= 2:
+                    score += 90 + overlap_hits * 12
+                    confidence = "Label+Cat"
+                elif overlap_hits == 1:
+                    score += 50
                     confidence = "Label+Cat"
 
+        # Label alignment
         labels = result.get("label") or []
+        labels_lower = [(candidate or "").lower() for candidate in labels]
+        label_match = False
         if label:
+            label_lower = label.lower()
             for candidate in labels:
-                if label.lower() in (candidate or "").lower():
-                    score += 20
+                if label_lower in (candidate or "").lower():
+                    score += 30
+                    label_match = True
                     if confidence == "Fallback":
                         confidence = "Label+Cat"
                     break
 
+        # Title alignment (lightweight)
+        title_match = False
         if title:
             result_title = (result.get("title") or "").lower()
             if title.lower() in result_title:
                 score += 10
+                title_match = True
                 if confidence == "Fallback":
                     confidence = "Title"
+
+        # Guardrails:
+        # - Avoid title-only matches when we have cat/label signals and no label intersection.
+        if title_match and not catno and (label and not label_match):
+            score = 0
+            confidence = "Fallback"
+
+        # If label provided and no label match and no cat overlap, drop.
+        if label and not label_match and score and not exact_cat and overlap_hits == 0:
+            score = 0
+            confidence = "Fallback"
+
+        # Soft year bias
+        release_year = result.get("year")
+        year_diff = None
+        if expected_year and isinstance(release_year, int):
+            year_diff = abs(release_year - expected_year)
+            if year_diff <= 1:
+                score += 12
+            elif year_diff <= 3:
+                score += 6
+
+        # Require some minimum alignment when catnos provided
+        if normalized_catnos and score < 20:
+            score = 0
+            confidence = "Fallback"
+
+        if self._debug_scoring:
+            self._log(
+                f"      score={score} conf={confidence} catno={catno} overlap={overlap_hits} "
+                f"label_match={label_match} labels={labels_lower} title_match={title_match} year_diff={year_diff}"
+            )
 
         return score, confidence
 
@@ -254,6 +305,18 @@ def _simple_norm(value: Optional[str]) -> str:
     if not value:
         return ""
     return "".join(ch for ch in value.upper() if ch.isalnum())
+
+
+def _parse_year(value: Any) -> Optional[int]:
+    """Best-effort year parsing."""
+
+    if value is None:
+        return None
+    try:
+        year = int(str(value).strip())
+    except (ValueError, TypeError):
+        return None
+    return year if 0 < year < 3000 else None
 
 
 __all__ = ["Enricher", "RowEnrichment"]

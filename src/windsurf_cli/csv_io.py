@@ -54,6 +54,11 @@ def write_output_csv(df: pd.DataFrame, path: Path) -> None:
     """
 
     ordered = df.reindex(columns=OUTPUT_COLUMNS, fill_value="")
+    # Sanitize typographic artifacts that can trigger Excel conversion prompts.
+    for col in ("Catalogue #", "Title"):
+        if col in ordered.columns:
+            ordered[col] = ordered[col].apply(_sanitize_text)
+
     path.parent.mkdir(parents=True, exist_ok=True)
     ordered.to_csv(path, index=False, encoding="utf-8")
 
@@ -118,6 +123,20 @@ def _read_text_with_replacement(path: Path) -> StringIO:
         except UnicodeDecodeError:
             continue
     return StringIO(raw.decode("utf-8", errors="replace"))
+
+
+def _sanitize_text(value: str) -> str:
+    """
+    Replace common typographic artifacts that can confuse Excel or lead to conversion prompts.
+    """
+
+    if not isinstance(value, str):
+        return value
+    return (
+        value.replace("\u00a0", " ")  # NBSP -> space
+        .replace("×", "x")  # multiplication sign -> ascii x
+        .replace("¬†", " ")  # NBSP mojibake
+    )
 
 
 def next_sequenced_path(path: Path, width: int = 4) -> Path:

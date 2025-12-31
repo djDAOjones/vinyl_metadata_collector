@@ -63,6 +63,8 @@ def _basic_cleanup(text: str) -> str:
     normalized = normalized.replace("–", "-").replace("—", "-")
     normalized = normalized.replace("\u200b", "")
     normalized = normalized.replace("\u00a0", " ")
+    normalized = normalized.replace("¬†", " ")  # mojibake for non-breaking space
+    normalized = normalized.replace("√ó", "x")  # mojibake for multiplication sign ×
     normalized = normalized.replace("�", " ")
     normalized = _replace_cp1252_glitches(normalized)
     return normalized
@@ -164,6 +166,9 @@ def _split_fragments(value: str) -> List[str]:
     for part in parts:
         trimmed = part.strip()
         if not trimmed:
+            continue
+        # Skip fragments with no digits to avoid matching plain label words (e.g., "COLUMBIA", "CAPITOL", "MONO").
+        if not any(ch.isdigit() for ch in trimmed):
             continue
         fragments.append(trimmed)
     return fragments
