@@ -30,7 +30,9 @@ class SearchOrchestrator:
         discogs_id = (str(row.get("Discogs ID")) or "").strip() or None
         normalized = normalize_catalogue(catno_raw)
 
-        search_label = label.strip() or _infer_label_from_catno(catno_raw)
+        search_label = _canonicalize_label(label.strip()) or _canonicalize_label(
+            _infer_label_from_catno(catno_raw) or ""
+        )
         title_clean = title.strip()
         artist_candidates = _candidate_artists(row)
 
@@ -58,12 +60,14 @@ class SearchOrchestrator:
                 {"type": "q", "params": {"q": f"{search_label.strip()} {normalized[0]}"}}
             )
 
-        if not normalized and title_clean:
+        # Always include title-based fallbacks (with and without label) to widen recall on tricky rows.
+        if title_clean:
             queries.extend(
                 _build_title_queries(
                     title=title_clean,
                     label=search_label,
                     artist_candidates=artist_candidates,
+                    include_no_label=True,
                 )
             )
 
@@ -79,6 +83,7 @@ def _build_title_queries(
     title: str,
     label: Optional[str],
     artist_candidates: List[str],
+    include_no_label: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     When catalogue numbers are unavailable, fall back to title-centric searches.
@@ -88,10 +93,13 @@ def _build_title_queries(
     """
 
     queries: List[Dict[str, Any]] = []
-    params = {"title": title}
+    params_with_label = {"title": title}
     if label:
-        params["label"] = label
-    queries.append({"type": "title", "params": params})
+        params_with_label["label"] = label
+    queries.append({"type": "title", "params": params_with_label})
+
+    if include_no_label:
+        queries.append({"type": "title_unscoped", "params": {"title": title}})
 
     for artist in artist_candidates:
         queries.append({"type": "title_artist", "params": {"title": title, "artist": artist}})
@@ -141,6 +149,29 @@ def _infer_label_from_catno(catno_raw: str) -> Optional[str]:
     if len(inferred) < 3:
         return None
     return inferred
+
+
+def _canonicalize_label(label: str) -> Optional[str]:
+    """Map common label variants to Discogs-friendly names."""
+
+    if not label:
+        return None
+
+    canon_map = {
+        "LONDON PS": "London Records",
+        "LONDON": "London Records",
+        "RCA RED SEAL": "RCA Red Seal",
+        "CAPITOL EMI MFP": "Music For Pleasure",
+        "MFP": "Music For Pleasure",
+        "COLUMBIA EMI": "Columbia",
+        "ANGEL": "Angel Records",
+    }
+
+    upper = label.upper()
+    for key, value in canon_map.items():
+        if key in upper:
+            return value
+    return label or None
 
 
 __all__ = ["SearchOrchestrator", "SearchPlan"]

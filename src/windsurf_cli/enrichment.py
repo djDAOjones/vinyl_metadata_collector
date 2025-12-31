@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 import typer
 
@@ -218,12 +218,18 @@ class Enricher:
         catno = _simple_norm(result.get("catno"))
 
         if catno and normalized_catnos:
+            # Strong match if any token equals.
             if catno in normalized_catnos:
                 score += 100
                 confidence = "Exact"
-            elif any(catno in variant or variant in catno for variant in normalized_catnos):
-                score += 60
-                confidence = "Label+Cat"
+            else:
+                # Partial token overlaps.
+                overlap_hits = sum(
+                    1 for variant in normalized_catnos if variant and (catno in variant or variant in catno)
+                )
+                if overlap_hits:
+                    score += 40 + overlap_hits * 5
+                    confidence = "Label+Cat"
 
         labels = result.get("label") or []
         if label:

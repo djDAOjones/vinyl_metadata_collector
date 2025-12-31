@@ -46,7 +46,7 @@ class DiscogsClient:
     token: str
     base_url: str = "https://api.discogs.com"
     timeout: float = 30.0
-    requests_per_minute: int = 10
+    requests_per_minute: int = 30
 
     def __post_init__(self) -> None:
         self._limiter = RateLimiter(self.requests_per_minute)
