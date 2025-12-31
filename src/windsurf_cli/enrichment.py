@@ -107,6 +107,8 @@ class Enricher:
                 try:
                     release = self._get_release_cached(release_id)
                     fields = map_release_to_fields(release)
+                    fields["Discogs URL"] = f"https://www.discogs.com/release/{release_id}"
+                    fields["Discogs ID Score"] = ""
                     return RowEnrichment(
                         found=True,
                         discogs_id=release_id,
@@ -133,6 +135,8 @@ class Enricher:
 
         release = self._get_release_cached(candidate["release_id"])
         fields = map_release_to_fields(release)
+        fields["Discogs URL"] = f"https://www.discogs.com/release/{candidate['release_id']}"
+        fields["Discogs ID Score"] = str(candidate["score"])
         self._log(
             f"    ↳ Selected release {candidate['release_id']} ({candidate['confidence']})"
         )

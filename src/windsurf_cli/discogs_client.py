@@ -19,26 +19,19 @@ class DiscogsError(RuntimeError):
 
 
 class RateLimiter:
-    """Token bucket limiter operating on a per-minute basis."""
+    """Fixed-interval limiter to avoid early bursts (approximately 60 / RPM seconds between calls)."""
 
     def __init__(self, requests_per_minute: int = 50) -> None:
-        self.capacity = max(1, requests_per_minute)
-        self.tokens = float(self.capacity)
-        self.refill_rate = self.capacity / 60.0  # tokens per second
-        self.last_checked = time.monotonic()
+        self.requests_per_minute = max(1, requests_per_minute)
+        self.min_interval = 60.0 / float(self.requests_per_minute)
+        self.next_available = time.monotonic()
 
     def acquire(self) -> None:
-        while True:
+        now = time.monotonic()
+        if now < self.next_available:
+            time.sleep(self.next_available - now)
             now = time.monotonic()
-            elapsed = now - self.last_checked
-            self.last_checked = now
-            self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
-
-            if self.tokens >= 1.0:
-                self.tokens -= 1.0
-                return
-
-            time.sleep(max(0.05, (1.0 - self.tokens) / self.refill_rate))
+        self.next_available = now + self.min_interval
 
 
 @dataclass
@@ -46,7 +39,7 @@ class DiscogsClient:
     token: str
     base_url: str = "https://api.discogs.com"
     timeout: float = 30.0
-    requests_per_minute: int = 30
+    requests_per_minute: int = 60
 
     def __post_init__(self) -> None:
         self._limiter = RateLimiter(self.requests_per_minute)
