@@ -123,7 +123,11 @@ class Enricher:
                     )
 
         expected_year = _parse_year(row.get("Year of Release") or row.get("Year"))
-        candidate = self._search_for_candidate(plan, label, title, expected_year)
+        composer = (row.get("Composer") or "").strip()
+        conductor = (row.get("Conductor") or "").strip()
+        candidate = self._search_for_candidate(
+            plan, label, title, expected_year, composer, conductor
+        )
         if not candidate:
             self._log("    ↳ No matching Discogs release found.")
             return RowEnrichment(
@@ -153,6 +157,8 @@ class Enricher:
         label: str,
         title: str,
         expected_year: Optional[int],
+        composer: str,
+        conductor: str,
     ) -> Optional[Dict[str, Any]]:
         best: Optional[Dict[str, Any]] = None
         normalized_simple = [_simple_norm(v) for v in plan.normalized_catnos]
@@ -174,7 +180,7 @@ class Enricher:
                 if not release_id:
                     continue
                 score, confidence = self._score_result(
-                    result, normalized_simple, label, title, expected_year
+                    result, normalized_simple, label, title, expected_year, composer, conductor
                 )
                 if score <= 0:
                     continue
@@ -221,6 +227,8 @@ class Enricher:
         label: str,
         title: str,
         expected_year: Optional[int],
+        composer: str,
+        conductor: str,
     ) -> tuple[int, str]:
         score = 0
         confidence = "Fallback"
@@ -281,6 +289,11 @@ class Enricher:
             score = 0
             confidence = "Fallback"
 
+        # For mixed catalogue strings, require multiple fragment hits unless cat is exact.
+        if not exact_cat and len(normalized_catnos) >= 4 and overlap_hits < 2:
+            score = 0
+            confidence = "Fallback"
+
         # Soft year bias
         release_year = result.get("year")
         year_diff = None
@@ -295,6 +308,18 @@ class Enricher:
         if normalized_catnos and score < 20:
             score = 0
             confidence = "Fallback"
+
+        # Composer / Conductor alignment (lightweight string containment on artist/title fields)
+        artist_field = (result.get("artist") or "").lower()
+        title_field = (result.get("title") or "").lower()
+        if composer:
+            comp_lower = composer.lower()
+            if comp_lower in artist_field or comp_lower in title_field:
+                score += 8
+        if conductor:
+            cond_lower = conductor.lower()
+            if cond_lower in artist_field or cond_lower in title_field:
+                score += 8
 
         if self._debug_scoring:
             self._log(

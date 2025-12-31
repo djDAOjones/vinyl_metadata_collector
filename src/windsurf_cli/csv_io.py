@@ -54,10 +54,9 @@ def write_output_csv(df: pd.DataFrame, path: Path) -> None:
     """
 
     ordered = df.reindex(columns=OUTPUT_COLUMNS, fill_value="")
-    # Sanitize typographic artifacts that can trigger Excel conversion prompts.
-    for col in ("Catalogue #", "Title"):
-        if col in ordered.columns:
-            ordered[col] = ordered[col].apply(_sanitize_text)
+    # Sanitize typographic artifacts across all text columns to improve readability in Excel.
+    for col in ordered.columns:
+        ordered[col] = ordered[col].apply(_sanitize_text)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     ordered.to_csv(path, index=False, encoding="utf-8")
