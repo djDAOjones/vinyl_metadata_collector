@@ -131,11 +131,38 @@ def _sanitize_text(value: str) -> str:
 
     if not isinstance(value, str):
         return value
-    return (
+    cleaned = (
         value.replace("\u00a0", " ")  # NBSP -> space
         .replace("×", "x")  # multiplication sign -> ascii x
         .replace("¬†", " ")  # NBSP mojibake
     )
+    repaired = _repair_mojibake(cleaned)
+    return repaired
+
+
+def _repair_mojibake(text: str) -> str:
+    """
+    Attempt to repair common mojibake patterns (UTF-8 seen as cp1252/latin1 or mac-roman).
+    """
+
+    # First try a round-trip latin-1 decode of UTF-8 bytes; if it fails, keep text.
+    try:
+        round_tripped = text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        round_tripped = text
+
+    # Map known oddballs (e.g., √º -> ü).
+    replacements = {
+        "√º": "ü",
+        "√ú": "Ü",
+        "√±": "ñ",
+        "≈ü": "ş",
+        "≈æ": "ß",
+    }
+    for bad, good in replacements.items():
+        round_tripped = round_tripped.replace(bad, good)
+
+    return round_tripped
 
 
 def next_sequenced_path(path: Path, width: int = 4) -> Path:
